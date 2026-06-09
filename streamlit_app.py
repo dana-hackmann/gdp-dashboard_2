@@ -98,6 +98,14 @@ selected_section = st.selectbox('Choose the temperature series', list(all_data))
 
 df = all_data[selected_section]
 
+# ---------------------------------------------------------
+# ⭐ Rolling Means hinzufügen
+# ---------------------------------------------------------
+df['Rolling 12M'] = df['Monthly Anomaly'].rolling(window=12).mean()
+df['Rolling 60M'] = df['Monthly Anomaly'].rolling(window=60).mean()
+df['Rolling 120M'] = df['Monthly Anomaly'].rolling(window=120).mean()
+# ---------------------------------------------------------
+
 min_year = int(df['Year'].min())
 max_year = int(df['Year'].max())
 selected_years = st.slider(
@@ -122,6 +130,9 @@ else:
                 'Five-year Anomaly',
                 'Ten-year Anomaly',
                 'Twenty-year Anomaly',
+                'Rolling 12M',
+                'Rolling 60M',
+                'Rolling 120M',
             ]
         ]
     )
@@ -149,6 +160,9 @@ else:
                 'Annual Anomaly',
                 'Five-year Anomaly',
                 'Ten-year Anomaly',
+                'Rolling 12M',
+                'Rolling 60M',
+                'Rolling 120M',
             ]
         ].tail(15),
         width='stretch',

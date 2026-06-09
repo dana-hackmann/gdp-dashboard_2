@@ -108,11 +108,15 @@ df['Rolling 120M'] = df['Monthly Anomaly'].rolling(window=120).mean()
 
 min_year = int(df['Year'].min())
 max_year = int(df['Year'].max())
+
+# Standardmäßig ab 1900 oder dem frühesten Jahr
+default_start_year = max(1900, min_year)
+
 selected_years = st.slider(
     'Select year range',
     min_value=min_year,
     max_value=max_year,
-    value=(min_year, max_year),
+    value=(default_start_year, max_year),
     help='Filter the dataset by the year range shown in the chart.',
 )
 

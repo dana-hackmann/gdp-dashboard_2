@@ -1,151 +1,155 @@
 import streamlit as st
 import pandas as pd
-import math
-from pathlib import Path
+from io import StringIO
+from urllib.request import urlopen
 
-# Set the title and favicon that appear in the Browser's tab bar.
-st.set_page_config(
-    page_title='GDP dashboard',
-    page_icon=':earth_americas:', # This is an emoji shortcode. Could be a URL too.
+DATA_URL = (
+    'https://berkeley-earth-temperature.s3.us-west-1.amazonaws.com/Global/'
+    'Land_and_Ocean_complete.txt'
 )
 
-# -----------------------------------------------------------------------------
-# Declare some useful functions.
-
-@st.cache_data
-def get_gdp_data():
-    """Grab GDP data from a CSV file.
-
-    This uses caching to avoid having to read the file every time. If we were
-    reading from an HTTP endpoint instead of a file, it's a good idea to set
-    a maximum age to the cache with the TTL argument: @st.cache_data(ttl='1d')
-    """
-
-    # Instead of a CSV on disk, you could read from an HTTP endpoint here too.
-    DATA_FILENAME = Path(__file__).parent/'data/gdp_data.csv'
-    raw_gdp_df = pd.read_csv(DATA_FILENAME)
-
-    MIN_YEAR = 1960
-    MAX_YEAR = 2022
-
-    # The data above has columns like:
-    # - Country Name
-    # - Country Code
-    # - [Stuff I don't care about]
-    # - GDP for 1960
-    # - GDP for 1961
-    # - GDP for 1962
-    # - ...
-    # - GDP for 2022
-    #
-    # ...but I want this instead:
-    # - Country Name
-    # - Country Code
-    # - Year
-    # - GDP
-    #
-    # So let's pivot all those year-columns into two: Year and GDP
-    gdp_df = raw_gdp_df.melt(
-        ['Country Code'],
-        [str(x) for x in range(MIN_YEAR, MAX_YEAR + 1)],
-        'Year',
-        'GDP',
-    )
-
-    # Convert years from string to integers
-    gdp_df['Year'] = pd.to_numeric(gdp_df['Year'])
-
-    return gdp_df
-
-gdp_df = get_gdp_data()
-
-# -----------------------------------------------------------------------------
-# Draw the actual page
-
-# Set the title that appears at the top of the page.
-'''
-# :earth_americas: GDP dashboard
-
-Browse GDP data from the [World Bank Open Data](https://data.worldbank.org/) website. As you'll
-notice, the data only goes to 2022 right now, and datapoints for certain years are often missing.
-But it's otherwise a great (and did I mention _free_?) source of data.
-'''
-
-# Add some spacing
-''
-''
-
-min_value = gdp_df['Year'].min()
-max_value = gdp_df['Year'].max()
-
-from_year, to_year = st.slider(
-    'Which years are you interested in?',
-    min_value=min_value,
-    max_value=max_value,
-    value=[min_value, max_value])
-
-countries = gdp_df['Country Code'].unique()
-
-if not len(countries):
-    st.warning("Select at least one country")
-
-selected_countries = st.multiselect(
-    'Which countries would you like to view?',
-    countries,
-    ['DEU', 'FRA', 'GBR', 'BRA', 'MEX', 'JPN'])
-
-''
-''
-''
-
-# Filter the data
-filtered_gdp_df = gdp_df[
-    (gdp_df['Country Code'].isin(selected_countries))
-    & (gdp_df['Year'] <= to_year)
-    & (from_year <= gdp_df['Year'])
+COLUMN_NAMES = [
+    'Year',
+    'Month',
+    'Monthly Anomaly',
+    'Monthly Unc',
+    'Annual Anomaly',
+    'Annual Unc',
+    'Five-year Anomaly',
+    'Five-year Unc',
+    'Ten-year Anomaly',
+    'Ten-year Unc',
+    'Twenty-year Anomaly',
+    'Twenty-year Unc',
 ]
 
-st.header('GDP over time', divider='gray')
+SECTION_LABELS = {
+    'Air Temperatures': (
+        'Global Average Temperature Anomaly with Sea Ice Temperature '
+        'Inferred from Air Temperatures'
+    ),
+    'Water Temperatures': (
+        'Global Average Temperature Anomaly with Sea Ice Temperature '
+        'Inferred from Water Temperatures'
+    ),
+}
 
-''
 
-st.line_chart(
-    filtered_gdp_df,
-    x='Year',
-    y='GDP',
-    color='Country Code',
+@st.cache_data
+def load_berkeley_temperatures(url: str = DATA_URL):
+    with urlopen(url) as response:
+        raw_text = response.read().decode('utf-8')
+
+    lines = raw_text.splitlines()
+    section_data = {label: [] for label in SECTION_LABELS}
+    active_section = None
+
+    for line in lines:
+        if line.startswith('%'):
+            stripped = line.lstrip('%').strip()
+            if stripped in SECTION_LABELS.values():
+                active_section = next(
+                    label for label, value in SECTION_LABELS.items() if value == stripped
+                )
+            continue
+
+        if active_section and line.strip():
+            section_data[active_section].append(line)
+
+    parsed = {}
+    for label, rows in section_data.items():
+        if not rows:
+            continue
+
+        section_text = '\n'.join(rows)
+        df = pd.read_csv(
+            StringIO(section_text),
+            sep=r'\s+',
+            header=None,
+            names=COLUMN_NAMES,
+            na_values=['NaN'],
+            engine='python',
+        )
+        df['Date'] = pd.to_datetime(
+            df['Year'].astype(int).astype(str)
+            + '-'
+            + df['Month'].astype(int).astype(str)
+            + '-01'
+        )
+        parsed[label] = df
+
+    return parsed
+
+
+st.set_page_config(
+    page_title='Berkeley Earth Temperature Dashboard',
+    page_icon=':thermometer:',
 )
 
-''
-''
+st.title('Berkeley Earth Land + Ocean Temperature Explorer')
+st.markdown(
+    'This app loads the Berkeley Earth global land-and-ocean temperature anomaly '
+    'dataset directly from the public text file and visualizes monthly and '
+    'rolling-average anomalies.'
+)
 
+all_data = load_berkeley_temperatures()
+selected_section = st.selectbox('Choose the temperature series', list(all_data))
 
-first_year = gdp_df[gdp_df['Year'] == from_year]
-last_year = gdp_df[gdp_df['Year'] == to_year]
+df = all_data[selected_section]
 
-st.header(f'GDP in {to_year}', divider='gray')
+min_year = int(df['Year'].min())
+max_year = int(df['Year'].max())
+selected_years = st.slider(
+    'Select year range',
+    min_value=min_year,
+    max_value=max_year,
+    value=(min_year, max_year),
+    help='Filter the dataset by the year range shown in the chart.',
+)
 
-''
+filtered_df = df[(df['Year'] >= selected_years[0]) & (df['Year'] <= selected_years[1])]
 
-cols = st.columns(4)
+if filtered_df.empty:
+    st.warning('No data is available for the chosen year range.')
+else:
+    st.subheader('Global Temperature Anomalies')
+    st.line_chart(
+        filtered_df.set_index('Date')[
+            [
+                'Monthly Anomaly',
+                'Annual Anomaly',
+                'Five-year Anomaly',
+                'Ten-year Anomaly',
+                'Twenty-year Anomaly',
+            ]
+        ]
+    )
 
-for i, country in enumerate(selected_countries):
-    col = cols[i % len(cols)]
+    latest = filtered_df.iloc[-1]
+    earliest = filtered_df.iloc[0]
 
-    with col:
-        first_gdp = first_year[first_year['Country Code'] == country]['GDP'].iat[0] / 1000000000
-        last_gdp = last_year[last_year['Country Code'] == country]['GDP'].iat[0] / 1000000000
+    st.metric(
+        label='Latest monthly anomaly',
+        value=f"{latest['Monthly Anomaly']:.3f} °C",
+        delta=f"{latest['Monthly Anomaly'] - earliest['Monthly Anomaly']:+.3f} °C",
+    )
+    st.metric(
+        label='Latest annual anomaly',
+        value=f"{latest['Annual Anomaly']:.3f} °C",
+        delta=f"{latest['Annual Anomaly'] - earliest['Annual Anomaly']:+.3f} °C",
+    )
 
-        if math.isnan(first_gdp):
-            growth = 'n/a'
-            delta_color = 'off'
-        else:
-            growth = f'{last_gdp / first_gdp:,.2f}x'
-            delta_color = 'normal'
-
-        st.metric(
-            label=f'{country} GDP',
-            value=f'{last_gdp:,.0f}B',
-            delta=growth,
-            delta_color=delta_color
-        )
+    st.markdown('### Recent data sample')
+    st.dataframe(
+        filtered_df[
+            [
+                'Date',
+                'Monthly Anomaly',
+                'Annual Anomaly',
+                'Five-year Anomaly',
+                'Ten-year Anomaly',
+            ]
+        ].tail(15),
+        width='stretch',
+    )
